@@ -1,0 +1,14 @@
+[package]
+name = "eaclaw-eye"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "eaclaw-eye"
+path = "src/main.rs"
+
+[dependencies]
+eye-core.workspace = true
+eaclaw-core.workspace = true
+tokio.workspace = true
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
