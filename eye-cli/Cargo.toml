@@ -7,6 +7,10 @@ edition.workspace = true
 name = "eaclaw-eye"
 path = "src/main.rs"
 
+[features]
+default = []
+v4l2 = ["eye-core/v4l2"]
+
 [dependencies]
 eye-core.workspace = true
 eaclaw-core.workspace = true
