@@ -6,3 +6,5 @@ pub mod model;
 pub mod motion;
 pub mod pipeline;
 pub mod rules;
+#[cfg(feature = "v4l2")]
+pub mod v4l2;
