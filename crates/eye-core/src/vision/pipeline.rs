@@ -4,10 +4,11 @@ use super::inference::InferenceEngine;
 use super::model::{Classification, Model, INPUT_SIZE};
 use super::motion::{MotionBox, MotionDetector};
 
+/// A single detection: a classified region of motion.
 #[derive(Debug, Clone)]
 pub struct Detection {
     pub classification: Classification,
-    pub region: MotionBox,
+    pub bbox: MotionBox,
     pub timestamp_ms: u64,
 }
 
@@ -87,13 +88,13 @@ impl Pipeline {
         let timestamp = self.curr_frame.timestamp_ms;
         let mut detections = Vec::new();
 
-        for region in boxes {
+        for bbox in boxes {
             // Crop the motion region and scale to CNN input size
             self.patch = self.curr_frame.crop_and_scale(
-                region.x,
-                region.y,
-                region.w,
-                region.h,
+                bbox.x,
+                bbox.y,
+                bbox.w,
+                bbox.h,
                 INPUT_SIZE,
             );
 
@@ -109,7 +110,7 @@ impl Pipeline {
 
             detections.push(Detection {
                 classification,
-                region,
+                bbox,
                 timestamp_ms: timestamp,
             });
         }
@@ -163,7 +164,7 @@ mod tests {
                 confidence: 0.92,
                 scores: [0.02, 0.92, 0.03, 0.03],
             },
-            region: MotionBox {
+            bbox: MotionBox {
                 x: 10,
                 y: 20,
                 w: 30,
@@ -187,7 +188,7 @@ mod tests {
                 confidence: 0.92,
                 scores: [0.02, 0.92, 0.03, 0.03],
             },
-            region: MotionBox {
+            bbox: MotionBox {
                 x: 10,
                 y: 20,
                 w: 30,

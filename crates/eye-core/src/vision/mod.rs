@@ -4,3 +4,4 @@ pub mod inference;
 pub mod model;
 pub mod motion;
 pub mod pipeline;
+pub mod rules;
