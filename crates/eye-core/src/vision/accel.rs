@@ -55,7 +55,10 @@ unsafe impl Sync for KernelTable {}
 static KERNELS: OnceLock<KernelTable> = OnceLock::new();
 
 fn k() -> &'static KernelTable {
-    KERNELS.get().expect("eye kernels not initialized — call accel::init() first")
+    KERNELS.get_or_init(|| {
+        let lib_dir = extract_kernels().expect("failed to extract eye kernels");
+        load_kernels(&lib_dir).expect("failed to load eye kernels")
+    })
 }
 
 /// Initialize the kernel runtime: extract embedded .so files and load them.
