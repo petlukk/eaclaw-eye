@@ -1,12 +1,14 @@
+use eaclaw_core::agent::background::TaskTable;
 use eaclaw_core::agent::Agent;
 use eaclaw_core::config::Config;
 use eaclaw_core::llm::anthropic::AnthropicProvider;
+use eaclaw_core::safety::shell_guard::ShellPolicy;
 use eaclaw_core::safety::SafetyLayer;
 use eaclaw_core::tools::ToolRegistry;
 use eye_core::eye::{start_camera_loop, EyeEvent};
 use eye_core::vision::capture::MockCamera;
 use eye_core::vision::model::Model;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 #[tokio::main]
 async fn main() {
@@ -44,7 +46,7 @@ async fn main() {
         std::process::exit(1);
     }
 
-    let config = match Config::from_env() {
+    let mut config = match Config::from_env() {
         Ok(c) => c,
         Err(e) => {
             eprintln!("Configuration error: {e}");
@@ -52,6 +54,11 @@ async fn main() {
             std::process::exit(1);
         }
     };
+
+    if config.shell_policy == ShellPolicy::Open {
+        tracing::warn!("overriding shell_policy to Safe (camera system)");
+        config.shell_policy = ShellPolicy::Safe;
+    }
 
     let use_mock = args.iter().any(|a| a == "--mock");
 
@@ -92,7 +99,10 @@ async fn main() {
     let (cam_w, cam_h) = camera.resolution();
     eprintln!("Camera: {}x{}", cam_w, cam_h);
 
-    let (mut eye_rx, eye_state) = start_camera_loop(camera, model, 100);
+    let cam_safety = Arc::new(Mutex::new(SafetyLayer::with_capacity(4096)));
+    let tasks = TaskTable::new();
+    let (mut eye_rx, eye_state) =
+        start_camera_loop(camera, model, 100, Arc::clone(&cam_safety), tasks.clone());
 
     let llm: Arc<dyn eaclaw_core::llm::LlmProvider> =
         Arc::new(AnthropicProvider::new(&config));
@@ -104,6 +114,7 @@ async fn main() {
     let channel = eaclaw_core::channel::repl::ReplChannel::new("eaclaw-eye");
     let mut agent = Agent::new(config.clone(), llm, tools, safety);
 
+    let event_tasks = tasks.clone();
     tokio::spawn(async move {
         while let Some(event) = eye_rx.recv().await {
             match event {
@@ -116,6 +127,9 @@ async fn main() {
                 EyeEvent::Status(s) => {
                     eprintln!("[STATUS] {s}");
                 }
+            }
+            for done in event_tasks.take_new_completions() {
+                eprintln!("[TASK] completed: {}", done.name);
             }
         }
     });

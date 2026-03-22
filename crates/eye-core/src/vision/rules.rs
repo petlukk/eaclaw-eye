@@ -1,6 +1,7 @@
 use super::model::{CLASS_NAMES, NUM_CLASSES};
 use super::pipeline::Detection;
 use serde::{Deserialize, Serialize};
+use serde_json;
 
 /// Case-insensitive lookup of a class name in CLASS_NAMES.
 fn class_index(name: &str) -> Option<usize> {
@@ -94,6 +95,40 @@ impl AlertRules {
             }
             None => false,
         }
+    }
+
+    /// Validate that all fields are within acceptable ranges.
+    ///
+    /// Guards external input (e.g. JSON config files, API calls).
+    /// Internal construction via `Default` is always valid.
+    pub fn validate(&self) -> Result<(), String> {
+        if self.min_confidence <= 0.0 || self.min_confidence > 1.0 {
+            return Err(format!(
+                "min_confidence must be in (0.0, 1.0], got {}",
+                self.min_confidence
+            ));
+        }
+        if self.cooldown_ms < 1 || self.cooldown_ms > 86_400_000 {
+            return Err(format!(
+                "cooldown_ms must be in [1, 86400000], got {}",
+                self.cooldown_ms
+            ));
+        }
+        if self.class_enabled.len() != NUM_CLASSES {
+            return Err(format!(
+                "class_enabled length must be {}, got {}",
+                NUM_CLASSES,
+                self.class_enabled.len()
+            ));
+        }
+        Ok(())
+    }
+
+    /// Deserialize from JSON and validate all fields.
+    pub fn from_json(json: &str) -> Result<Self, String> {
+        let rules: Self = serde_json::from_str(json).map_err(|e| e.to_string())?;
+        rules.validate()?;
+        Ok(rules)
     }
 
     /// Human-readable summary of the current alert configuration.
@@ -240,5 +275,51 @@ mod tests {
         assert!(desc.contains("person"), "should mention person: {desc}");
         assert!(desc.contains("vehicle"), "should mention vehicle: {desc}");
         assert!(desc.contains("50%"), "should mention 50%: {desc}");
+    }
+
+    #[test]
+    fn test_validate_default_ok() {
+        assert!(AlertRules::default().validate().is_ok());
+    }
+
+    #[test]
+    fn test_validate_zero_confidence() {
+        let mut rules = AlertRules::default();
+        rules.min_confidence = 0.0;
+        assert!(rules.validate().is_err());
+    }
+
+    #[test]
+    fn test_validate_confidence_above_one() {
+        let mut rules = AlertRules::default();
+        rules.min_confidence = 1.01;
+        assert!(rules.validate().is_err());
+    }
+
+    #[test]
+    fn test_validate_cooldown_zero() {
+        let mut rules = AlertRules::default();
+        rules.cooldown_ms = 0;
+        assert!(rules.validate().is_err());
+    }
+
+    #[test]
+    fn test_validate_cooldown_too_large() {
+        let mut rules = AlertRules::default();
+        rules.cooldown_ms = 86_400_001;
+        assert!(rules.validate().is_err());
+    }
+
+    #[test]
+    fn test_from_json_valid() {
+        let json = r#"{"class_enabled":[false,true,true,false],"min_confidence":0.7,"mute_until_ms":0,"cooldown_ms":10000}"#;
+        let rules = AlertRules::from_json(json).unwrap();
+        assert!((rules.min_confidence - 0.7).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_from_json_invalid_confidence() {
+        let json = r#"{"class_enabled":[false,true,true,false],"min_confidence":0.0,"mute_until_ms":0,"cooldown_ms":10000}"#;
+        assert!(AlertRules::from_json(json).is_err());
     }
 }

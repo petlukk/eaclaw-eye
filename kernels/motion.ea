@@ -1,0 +1,100 @@
+// motion.ea — Fused motion detection: abs-diff + threshold + grid counting
+// ARM NEON: u8x16 loads (16 pixels/iter), widen to i32x4 for abs-diff
+// Rule 3: diff value stays in register, never written to memory
+
+export func motion_fused(
+    prev: *restrict u8,
+    curr: *restrict u8,
+    grid_counts: *mut u32,
+    width: i32,
+    height: i32,
+    threshold: i32,
+    cell_size: i32,
+    cols: i32
+) -> i32 {
+    let vzero: i32x4 = splat(0)
+    let vthresh: i32x4 = splat(threshold)
+    let mut total_changed: i32 = 0
+
+    let mut y: i32 = 0
+    for y in 0..height {
+        let gy: i32 = y / cell_size
+        let row_off: i32 = y * width
+        let mut x: i32 = 0
+
+        // SIMD path: 16 pixels per iteration
+        while x + 16 <= width {
+            let p: u8x16 = load(prev, row_off + x)
+            let c: u8x16 = load(curr, row_off + x)
+
+            // Process bytes 0-3: widen to i32, abs-diff, threshold
+            let p0: i32x4 = widen_u8_i32x4(p)
+            let c0: i32x4 = widen_u8_i32x4(c)
+            let d0: i32x4 = p0 .- c0
+            let a0: i32x4 = select(d0 .< vzero, vzero .- d0, d0)
+            let m0: i32x4 = select(a0 .> vthresh, splat(1), vzero)
+            let cnt0: i32 = reduce_add(m0)
+
+            // Process bytes 4-7
+            let ps1: u8x16 = shuffle(p, [4, 5, 6, 7, 0, 1, 2, 3, 8, 9, 10, 11, 12, 13, 14, 15])
+            let cs1: u8x16 = shuffle(c, [4, 5, 6, 7, 0, 1, 2, 3, 8, 9, 10, 11, 12, 13, 14, 15])
+            let p1: i32x4 = widen_u8_i32x4(ps1)
+            let c1: i32x4 = widen_u8_i32x4(cs1)
+            let d1: i32x4 = p1 .- c1
+            let a1: i32x4 = select(d1 .< vzero, vzero .- d1, d1)
+            let m1: i32x4 = select(a1 .> vthresh, splat(1), vzero)
+            let cnt1: i32 = reduce_add(m1)
+
+            // Process bytes 8-11
+            let ps2: u8x16 = shuffle(p, [8, 9, 10, 11, 0, 1, 2, 3, 4, 5, 6, 7, 12, 13, 14, 15])
+            let cs2: u8x16 = shuffle(c, [8, 9, 10, 11, 0, 1, 2, 3, 4, 5, 6, 7, 12, 13, 14, 15])
+            let p2: i32x4 = widen_u8_i32x4(ps2)
+            let c2: i32x4 = widen_u8_i32x4(cs2)
+            let d2: i32x4 = p2 .- c2
+            let a2: i32x4 = select(d2 .< vzero, vzero .- d2, d2)
+            let m2: i32x4 = select(a2 .> vthresh, splat(1), vzero)
+            let cnt2: i32 = reduce_add(m2)
+
+            // Process bytes 12-15
+            let ps3: u8x16 = shuffle(p, [12, 13, 14, 15, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11])
+            let cs3: u8x16 = shuffle(c, [12, 13, 14, 15, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11])
+            let p3: i32x4 = widen_u8_i32x4(ps3)
+            let c3: i32x4 = widen_u8_i32x4(cs3)
+            let d3: i32x4 = p3 .- c3
+            let a3: i32x4 = select(d3 .< vzero, vzero .- d3, d3)
+            let m3: i32x4 = select(a3 .> vthresh, splat(1), vzero)
+            let cnt3: i32 = reduce_add(m3)
+
+            let chunk_hits: i32 = cnt0 + cnt1 + cnt2 + cnt3
+            if chunk_hits > 0 {
+                // All 16 pixels in this chunk map to at most 2 grid cells
+                // For simplicity, assign all hits to the cell of the chunk midpoint
+                let gx: i32 = (x + 8) / cell_size
+                // Clamp gx to valid range
+                if gx < cols {
+                    grid_counts[gy * cols + gx] = grid_counts[gy * cols + gx] + chunk_hits
+                }
+                total_changed = total_changed + chunk_hits
+            }
+
+            x = x + 16
+        }
+
+        // Scalar tail
+        while x < width {
+            let idx: i32 = row_off + x
+            let pv: i32 = to_i32(prev[idx])
+            let cv: i32 = to_i32(curr[idx])
+            let mut diff: i32 = pv - cv
+            if diff < 0 { diff = 0 - diff }
+            if diff > threshold {
+                let gx: i32 = x / cell_size
+                grid_counts[gy * cols + gx] = grid_counts[gy * cols + gx] + 1
+                total_changed = total_changed + 1
+            }
+            x = x + 1
+        }
+    }
+
+    return total_changed
+}

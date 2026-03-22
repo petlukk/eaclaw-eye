@@ -7,6 +7,16 @@ use super::model::*;
 pub struct InferenceEngine {
     buf_a: Vec<f32>,
     buf_b: Vec<f32>,
+    /// Relaid-out conv weights for EA kernels: [c_out][3][3][c_in] layout.
+    /// Allocated once, reused across frames. Only populated when `ea` feature is active.
+    #[cfg(feature = "ea")]
+    conv1_weights_relaid: Vec<i8>,
+    #[cfg(feature = "ea")]
+    conv2_weights_relaid: Vec<i8>,
+    #[cfg(feature = "ea")]
+    conv3_weights_relaid: Vec<i8>,
+    #[cfg(feature = "ea")]
+    weights_ready: bool,
 }
 
 impl InferenceEngine {
@@ -15,59 +25,155 @@ impl InferenceEngine {
         Self {
             buf_a: vec![0.0f32; worst_case],
             buf_b: vec![0.0f32; worst_case],
+            #[cfg(feature = "ea")]
+            conv1_weights_relaid: vec![0i8; CONV1_WEIGHTS],
+            #[cfg(feature = "ea")]
+            conv2_weights_relaid: vec![0i8; CONV2_WEIGHTS],
+            #[cfg(feature = "ea")]
+            conv3_weights_relaid: vec![0i8; CONV3_WEIGHTS],
+            #[cfg(feature = "ea")]
+            weights_ready: false,
         }
+    }
+
+    /// Relayout weights on first use (once per model, not per frame).
+    #[cfg(feature = "ea")]
+    fn ensure_weights_relaid(&mut self, model: &Model) {
+        if self.weights_ready {
+            return;
+        }
+        use super::accel::ea_relayout_conv_weights;
+        ea_relayout_conv_weights(
+            model.conv1_weights(), &mut self.conv1_weights_relaid,
+            CONV1_OUT, CONV1_IN,
+        );
+        ea_relayout_conv_weights(
+            model.conv2_weights(), &mut self.conv2_weights_relaid,
+            CONV2_OUT, CONV2_IN,
+        );
+        ea_relayout_conv_weights(
+            model.conv3_weights(), &mut self.conv3_weights_relaid,
+            CONV3_OUT, CONV3_IN,
+        );
+        self.weights_ready = true;
     }
 
     pub fn classify(&mut self, frame: &Frame, model: &Model) -> Classification {
         let sz = INPUT_SIZE as usize;
 
         // Step 1: Normalize u8 -> f32 into buf_a (64x64x1)
-        for i in 0..frame.data.len().min(sz * sz) {
-            self.buf_a[i] = (frame.data[i] as f32 / 127.5) - 1.0;
+        #[cfg(feature = "ea")]
+        {
+            let n = frame.data.len().min(sz * sz);
+            super::accel::ea_normalize_u8_f32(
+                &frame.data[..n], &mut self.buf_a[..n],
+                1.0 / 127.5, -1.0,
+            );
         }
-
-        // Step 2: Layer 1 — 64x64x1 -> 32x32x8
-        fused_conv_relu_pool(
-            &self.buf_a, 64, 64, CONV1_IN,
-            model.conv1_weights(), model.conv1_bias(),
-            CONV1_OUT, &mut self.buf_b,
-        );
-
-        // Step 3: Layer 2 — 32x32x8 -> 16x16x16
-        fused_conv_relu_pool(
-            &self.buf_b, 32, 32, CONV2_IN,
-            model.conv2_weights(), model.conv2_bias(),
-            CONV2_OUT, &mut self.buf_a,
-        );
-
-        // Step 4: Layer 3 — 16x16x16 -> 8x8x32
-        fused_conv_relu_pool(
-            &self.buf_a, 16, 16, CONV3_IN,
-            model.conv3_weights(), model.conv3_bias(),
-            CONV3_OUT, &mut self.buf_b,
-        );
-
-        // Step 5: Fused GAP + FC + softmax
-        let scores = fused_gap_fc_softmax(
-            &self.buf_b, 8, 8, CONV3_OUT,
-            model.fc_weights(), model.fc_bias(),
-        );
-
-        // Step 6: Argmax
-        let mut best_id = 0;
-        let mut best_score = scores[0];
-        for i in 1..NUM_CLASSES {
-            if scores[i] > best_score {
-                best_score = scores[i];
-                best_id = i;
+        #[cfg(not(feature = "ea"))]
+        {
+            for i in 0..frame.data.len().min(sz * sz) {
+                self.buf_a[i] = (frame.data[i] as f32 / 127.5) - 1.0;
             }
         }
 
-        Classification {
-            class_id: best_id,
-            class_name: CLASS_NAMES[best_id],
-            confidence: best_score,
-            scores,
+        #[cfg(feature = "ea")]
+        {
+            use super::accel::{ea_conv3x3_relu_pool, ea_gap_fc_softmax};
+            self.ensure_weights_relaid(model);
+
+            // Layer 1: 64x64x1 -> 32x32x8
+            ea_conv3x3_relu_pool(
+                &self.buf_a, 64, 64, CONV1_IN,
+                &self.conv1_weights_relaid, model.conv1_bias(),
+                CONV1_OUT, &mut self.buf_b,
+            );
+
+            // Layer 2: 32x32x8 -> 16x16x16
+            ea_conv3x3_relu_pool(
+                &self.buf_b, 32, 32, CONV2_IN,
+                &self.conv2_weights_relaid, model.conv2_bias(),
+                CONV2_OUT, &mut self.buf_a,
+            );
+
+            // Layer 3: 16x16x16 -> 8x8x32
+            ea_conv3x3_relu_pool(
+                &self.buf_a, 16, 16, CONV3_IN,
+                &self.conv3_weights_relaid, model.conv3_bias(),
+                CONV3_OUT, &mut self.buf_b,
+            );
+
+            // GAP + FC + softmax
+            let mut scores = [0.0f32; NUM_CLASSES];
+            ea_gap_fc_softmax(
+                &self.buf_b, 8, 8, CONV3_OUT,
+                model.fc_weights(), model.fc_bias(),
+                &mut scores, NUM_CLASSES,
+            );
+
+            // Argmax
+            let mut best_id = 0;
+            let mut best_score = scores[0];
+            for i in 1..NUM_CLASSES {
+                if scores[i] > best_score {
+                    best_score = scores[i];
+                    best_id = i;
+                }
+            }
+
+            Classification {
+                class_id: best_id,
+                class_name: CLASS_NAMES[best_id],
+                confidence: best_score,
+                scores,
+            }
+        }
+
+        #[cfg(not(feature = "ea"))]
+        {
+            // Step 2: Layer 1 — 64x64x1 -> 32x32x8
+            fused_conv_relu_pool(
+                &self.buf_a, 64, 64, CONV1_IN,
+                model.conv1_weights(), model.conv1_bias(),
+                CONV1_OUT, &mut self.buf_b,
+            );
+
+            // Step 3: Layer 2 — 32x32x8 -> 16x16x16
+            fused_conv_relu_pool(
+                &self.buf_b, 32, 32, CONV2_IN,
+                model.conv2_weights(), model.conv2_bias(),
+                CONV2_OUT, &mut self.buf_a,
+            );
+
+            // Step 4: Layer 3 — 16x16x16 -> 8x8x32
+            fused_conv_relu_pool(
+                &self.buf_a, 16, 16, CONV3_IN,
+                model.conv3_weights(), model.conv3_bias(),
+                CONV3_OUT, &mut self.buf_b,
+            );
+
+            // Step 5: Fused GAP + FC + softmax
+            let scores = fused_gap_fc_softmax(
+                &self.buf_b, 8, 8, CONV3_OUT,
+                model.fc_weights(), model.fc_bias(),
+            );
+
+            // Step 6: Argmax
+            let mut best_id = 0;
+            let mut best_score = scores[0];
+            for i in 1..NUM_CLASSES {
+                if scores[i] > best_score {
+                    best_score = scores[i];
+                    best_id = i;
+                }
+            }
+
+            Classification {
+                class_id: best_id,
+                class_name: CLASS_NAMES[best_id],
+                confidence: best_score,
+                scores,
+            }
         }
     }
 }

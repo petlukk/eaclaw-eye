@@ -15,4 +15,5 @@ v4l2 = ["eye-core/v4l2"]
 eye-core.workspace = true
 eaclaw-core.workspace = true
 tokio.workspace = true
+tracing.workspace = true
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }

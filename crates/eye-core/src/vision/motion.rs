@@ -38,23 +38,40 @@ impl MotionDetector {
         self.grid_counts.resize((cols * rows) as usize, 0);
         self.grid_counts.fill(0);
 
-        let mut total_changed = 0u32;
+        #[cfg(feature = "ea")]
+        let total_changed = {
+            super::accel::ea_motion_fused(
+                &prev.data,
+                &curr.data,
+                &mut self.grid_counts,
+                width,
+                height,
+                self.threshold,
+                self.cell_size,
+                cols,
+            )
+        };
 
-        // Single pass: diff + threshold + grid accumulate (fused)
-        // diff value stays in register -- never written to memory
-        for y in 0..height {
-            let gy = y / self.cell_size;
-            for x in 0..width {
-                let idx = (y * width + x) as usize;
-                let diff =
-                    (prev.data[idx] as i16 - curr.data[idx] as i16).unsigned_abs() as u8;
-                if diff > self.threshold {
-                    let gx = x / self.cell_size;
-                    self.grid_counts[(gy * cols + gx) as usize] += 1;
-                    total_changed += 1;
+        #[cfg(not(feature = "ea"))]
+        let total_changed = {
+            let mut changed = 0u32;
+            // Single pass: diff + threshold + grid accumulate (fused)
+            // diff value stays in register -- never written to memory
+            for y in 0..height {
+                let gy = y / self.cell_size;
+                for x in 0..width {
+                    let idx = (y * width + x) as usize;
+                    let diff =
+                        (prev.data[idx] as i16 - curr.data[idx] as i16).unsigned_abs() as u8;
+                    if diff > self.threshold {
+                        let gx = x / self.cell_size;
+                        self.grid_counts[(gy * cols + gx) as usize] += 1;
+                        changed += 1;
+                    }
                 }
             }
-        }
+            changed
+        };
 
         if total_changed < self.min_pixels {
             return Vec::new();

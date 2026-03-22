@@ -3,6 +3,8 @@ use crate::vision::dedup::DetectionDedup;
 use crate::vision::model::Model;
 use crate::vision::pipeline::{Detection, Pipeline};
 use crate::vision::rules::AlertRules;
+use eaclaw_core::agent::background::TaskTable;
+use eaclaw_core::safety::SafetyLayer;
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::mpsc;
@@ -36,6 +38,8 @@ pub fn start_camera_loop(
     mut camera: Box<dyn Camera>,
     model: Model,
     frame_interval_ms: u64,
+    safety: Arc<Mutex<SafetyLayer>>,
+    tasks: TaskTable,
 ) -> (mpsc::Receiver<EyeEvent>, Arc<Mutex<EyeState>>) {
     let (tx, rx) = mpsc::channel(64);
 
@@ -51,7 +55,8 @@ pub fn start_camera_loop(
     tokio::spawn(async move {
         let (w, h) = camera.resolution();
         let mut pipeline = Pipeline::new(model, w, h);
-        let mut dedup = DetectionDedup::new(256);
+        let mut dedup = DetectionDedup::new(1024);
+        let task_id = tasks.register("camera_loop", "vision pipeline");
 
         let _ = tx.send(EyeEvent::Status("Camera started".to_string())).await;
 
@@ -82,6 +87,25 @@ pub fn start_camera_loop(
                         };
 
                         if should_alert && !dedup.is_duplicate(&detection) {
+                            // Scan alert text for prompt injection
+                            let alert_blocked = {
+                                let mut sl = safety.lock().unwrap();
+                                let scan = sl.scan_output(&detection.alert_text());
+                                if !scan.is_blocked() {
+                                    // Also scan machine-readable recall text
+                                    sl.scan_output(&detection.recall_text()).is_blocked()
+                                } else {
+                                    true
+                                }
+                            };
+                            if alert_blocked {
+                                let _ = tx
+                                    .send(EyeEvent::Error(
+                                        "Alert blocked by safety scan".to_string(),
+                                    ))
+                                    .await;
+                                continue;
+                            }
                             {
                                 let mut st = shared_state.lock().unwrap();
                                 st.rules.record_alert(now);
@@ -103,6 +127,7 @@ pub fn start_camera_loop(
 
             tokio::time::sleep(tokio::time::Duration::from_millis(frame_interval_ms)).await;
         }
+        tasks.complete(task_id, "Camera loop stopped".to_string());
     });
 
     (rx, state)
@@ -114,12 +139,16 @@ mod tests {
     use crate::vision::capture::MockCamera;
     use crate::vision::model::Model;
 
+    fn test_safety() -> Arc<Mutex<SafetyLayer>> {
+        Arc::new(Mutex::new(SafetyLayer::new()))
+    }
+
     #[tokio::test]
     async fn test_camera_loop_starts() {
         let camera = Box::new(MockCamera::new(320, 240));
         let model = Model::dummy();
 
-        let (mut rx, state) = start_camera_loop(camera, model, 10);
+        let (mut rx, state) = start_camera_loop(camera, model, 10, test_safety(), TaskTable::new());
 
         // Should receive the "Camera started" status event
         let event = tokio::time::timeout(
@@ -147,7 +176,7 @@ mod tests {
         let camera = Box::new(MockCamera::new(320, 240));
         let model = Model::dummy();
 
-        let (mut rx, state) = start_camera_loop(camera, model, 10);
+        let (mut rx, state) = start_camera_loop(camera, model, 10, test_safety(), TaskTable::new());
 
         // Wait for the start event to confirm the loop is running
         let _ = tokio::time::timeout(

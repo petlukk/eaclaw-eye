@@ -8,3 +8,5 @@ pub mod pipeline;
 pub mod rules;
 #[cfg(feature = "v4l2")]
 pub mod v4l2;
+#[cfg(feature = "ea")]
+pub mod accel;
