@@ -25,15 +25,14 @@ for f in kernels/*.ea; do
     # Object file lands in cwd as ${stem}.o
     if command -v "$AARCH64_CC" &>/dev/null; then
         "$AARCH64_CC" -shared -nostdlib "${stem}.o" -o "kernels/prebuilt/aarch64/lib${stem}.so"
+    elif command -v aarch64-linux-gnu-ld &>/dev/null; then
+        aarch64-linux-gnu-ld -shared "${stem}.o" -o "kernels/prebuilt/aarch64/lib${stem}.so"
+    elif command -v ld.lld &>/dev/null; then
+        ld.lld -shared --no-undefined-version "${stem}.o" -o "kernels/prebuilt/aarch64/lib${stem}.so"
     else
-        # No cross-linker: link with ld.lld if available
-        if command -v ld.lld &>/dev/null; then
-            ld.lld -shared --no-undefined-version "${stem}.o" -o "kernels/prebuilt/aarch64/lib${stem}.so"
-        else
-            echo "    WARN: no aarch64 linker found, keeping .o only"
-            mv "${stem}.o" "kernels/prebuilt/aarch64/lib${stem}.o"
-            continue
-        fi
+        echo "    WARN: no aarch64 linker found, keeping .o only"
+        mv "${stem}.o" "kernels/prebuilt/aarch64/lib${stem}.o"
+        continue
     fi
     rm -f "${stem}.o"
 done
