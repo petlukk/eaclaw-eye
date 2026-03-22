@@ -10,6 +10,7 @@ path = "src/main.rs"
 [features]
 default = []
 v4l2 = ["eye-core/v4l2"]
+ea = ["eye-core/ea"]
 
 [dependencies]
 eye-core.workspace = true

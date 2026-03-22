@@ -46,6 +46,12 @@ async fn main() {
         std::process::exit(1);
     }
 
+    #[cfg(feature = "ea")]
+    if let Err(e) = eye_core::vision::accel::init() {
+        eprintln!("Failed to initialize eye SIMD kernels: {e}");
+        std::process::exit(1);
+    }
+
     let mut config = match Config::from_env() {
         Ok(c) => c,
         Err(e) => {
