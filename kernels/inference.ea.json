@@ -1,0 +1,22 @@
+{
+  "library": "kernels/prebuilt/x86_64/libinference.so",
+  "exports": [
+    {
+      "name": "relayout_conv_weights",
+      "args": [{"name": "src", "type": "*restrict i8", "direction": "in", "cap": null, "count": null}, {"name": "dst", "type": "*mut i8", "direction": "in", "cap": null, "count": null}, {"name": "c_out", "type": "i32", "direction": "in", "cap": null, "count": null}, {"name": "c_in", "type": "i32", "direction": "in", "cap": null, "count": null}],
+      "return_type": null
+    },
+    {
+      "name": "conv3x3_relu_pool",
+      "args": [{"name": "input", "type": "*restrict f32", "direction": "in", "cap": null, "count": null}, {"name": "in_w", "type": "i32", "direction": "in", "cap": null, "count": null}, {"name": "in_h", "type": "i32", "direction": "in", "cap": null, "count": null}, {"name": "c_in", "type": "i32", "direction": "in", "cap": null, "count": null}, {"name": "weights", "type": "*restrict i8", "direction": "in", "cap": null, "count": null}, {"name": "bias", "type": "*restrict i8", "direction": "in", "cap": null, "count": null}, {"name": "c_out", "type": "i32", "direction": "in", "cap": null, "count": null}, {"name": "output", "type": "*mut f32", "direction": "in", "cap": null, "count": null}],
+      "return_type": null
+    },
+    {
+      "name": "gap_fc_softmax",
+      "args": [{"name": "input", "type": "*restrict f32", "direction": "in", "cap": null, "count": null}, {"name": "w", "type": "i32", "direction": "in", "cap": null, "count": null}, {"name": "h", "type": "i32", "direction": "in", "cap": null, "count": null}, {"name": "channels", "type": "i32", "direction": "in", "cap": null, "count": null}, {"name": "fc_weights", "type": "*restrict i8", "direction": "in", "cap": null, "count": null}, {"name": "fc_bias", "type": "*restrict i8", "direction": "in", "cap": null, "count": null}, {"name": "scores_out", "type": "*mut f32", "direction": "in", "cap": null, "count": null}, {"name": "num_classes", "type": "i32", "direction": "in", "cap": null, "count": null}],
+      "return_type": null
+    }
+  ],
+  "structs": [
+  ]
+}

@@ -50,8 +50,6 @@ export func conv3x3_relu_pool(
 ) {
     let out_w: i32 = in_w / 2
     let out_h: i32 = in_h / 2
-    let cin4: i32 = c_in - (c_in % 4)
-
     let mut oc: i32 = 0
     for oc in 0..c_out {
         let bias_val: f32 = to_f32(to_i32(bias[oc]))
@@ -71,7 +69,6 @@ export func conv3x3_relu_pool(
                         let oy: i32 = py * 2 + dy
 
                         // Conv3x3 accumulator — stays in register
-                        let mut acc_vec: f32x4 = splat(0.0)
                         let mut acc_scalar: f32 = bias_val
 
                         let mut ky: i32 = 0
@@ -89,22 +86,9 @@ export func conv3x3_relu_pool(
                                                 let in_base: i32 = (iy * in_w + ix) * c_in
                                                 let w_base: i32 = (oc * 9 + ky * 3 + kx) * c_in
 
-                                                // SIMD inner loop over c_in, 4 channels at a time
-                                                // Input f32 is contiguous in HWC, weights in [oc][ky][kx][ic]
+                                                // Scalar inner loop over c_in
+                                                // i8 weights prevent vectorization (no gather)
                                                 let mut ic: i32 = 0
-                                                while ic < cin4 {
-                                                    let pix: f32x4 = load(input, in_base + ic)
-                                                    // i8 weights: scalar widen to f32x4 vector literal
-                                                    let w0: f32 = to_f32(to_i32(weights[w_base + ic]))
-                                                    let w1: f32 = to_f32(to_i32(weights[w_base + ic + 1]))
-                                                    let w2: f32 = to_f32(to_i32(weights[w_base + ic + 2]))
-                                                    let w3: f32 = to_f32(to_i32(weights[w_base + ic + 3]))
-                                                    let wv: f32x4 = [w0, w1, w2, w3]:f32x4
-                                                    acc_vec = fma(pix, wv, acc_vec)
-                                                    ic = ic + 4
-                                                }
-
-                                                // Scalar tail for remaining channels
                                                 while ic < c_in {
                                                     let pixel: f32 = input[in_base + ic]
                                                     let w: f32 = to_f32(to_i32(weights[w_base + ic]))
@@ -118,8 +102,7 @@ export func conv3x3_relu_pool(
                             }
                         }
 
-                        // Reduce vector accumulator and combine with scalar
-                        let conv_val: f32 = reduce_add(acc_vec) + acc_scalar
+                        let conv_val: f32 = acc_scalar
                         // ReLU — stays in register
                         let mut relu_val: f32 = conv_val
                         if relu_val < 0.0 { relu_val = 0.0 }

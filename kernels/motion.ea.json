@@ -1,0 +1,12 @@
+{
+  "library": "kernels/prebuilt/x86_64/libmotion.so",
+  "exports": [
+    {
+      "name": "motion_fused",
+      "args": [{"name": "prev", "type": "*restrict u8", "direction": "in", "cap": null, "count": null}, {"name": "curr", "type": "*restrict u8", "direction": "in", "cap": null, "count": null}, {"name": "grid_counts", "type": "*mut i32", "direction": "in", "cap": null, "count": null}, {"name": "width", "type": "i32", "direction": "in", "cap": null, "count": null}, {"name": "height", "type": "i32", "direction": "in", "cap": null, "count": null}, {"name": "threshold", "type": "i32", "direction": "in", "cap": null, "count": null}, {"name": "cell_size", "type": "i32", "direction": "in", "cap": null, "count": null}, {"name": "cols", "type": "i32", "direction": "in", "cap": null, "count": null}],
+      "return_type": "i32"
+    }
+  ],
+  "structs": [
+  ]
+}

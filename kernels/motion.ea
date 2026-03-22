@@ -5,7 +5,7 @@
 export func motion_fused(
     prev: *restrict u8,
     curr: *restrict u8,
-    grid_counts: *mut u32,
+    grid_counts: *mut i32,
     width: i32,
     height: i32,
     threshold: i32,
